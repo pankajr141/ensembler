@@ -11,10 +11,9 @@ from scipy.optimize import minimize
 from sklearn import cross_validation
 from sklearn import metrics
 from sklearn.externals import joblib
-from sklearn.grid_search import GridSearchCV
 from sklearn.linear_model import LogisticRegression
-
 import numpy as np
+import optimize
 import pandas as pd
 
 
@@ -43,6 +42,51 @@ def models_avg(clfs, x_test, y_test):
 
 
 class BlendModel():
+    """
+    Parameters
+    ----------
+    baseEstimators : list
+        Object list of all the classifiers which will be used as a base level estimators.
+
+    nFoldsBase : int, optional (default=3)
+        Cross validation for base models, it is neccessary if to train base estimators on partial data, 
+        if they see all data then our meta estimator will overfit on train data.
+
+    saveAndPickBaseDump : bool, default: False
+        When set to true will save base estimatar and blended data set to disk on the location specified by
+        saveAndPickBaseDumpLoc. This is crucial when deciding metaEstimator as their is not need to retrain 
+        baseEstimators which could be a time consuming process.
+
+    saveAndPickBaseDumpLoc: string (default=tmp)
+        Location of the pickled data, if is used when saveAndPickBaseDump is set to true
+
+    metaEstimator: classifier (default=LogisticRegression)
+        2nd level classifier which will train on the data provided by baseEstimiators
+
+    metaTunedParams: dict (default=None)
+        tuning parameter for metaEstimator, could be different based on metaOptimizer
+
+    nFoldsMeta: int (default=5)
+        cross validation for metaEstimator
+
+    metaOptimizer: string (default=grid)
+        'grid': uses GridSearchCV to tune metaEstmator
+        'random': uses RandomizedSearchCV to tune metaEstmator
+        'bayesian': uses BayesianOptimization to tune metaEstimator
+
+    metaOptimizerJobs: int (default=2)
+        no of parallel jobs for metaOptimizer
+
+    metaOptimizerIter: int (default=1)
+        used when metaOptimizer=random, number of iteration metaOptimizer will run before halting
+        Note: metaTunedParams must have this number of combination else it will throw error
+
+    metaOptimizerInitPoints: int (default=2)
+        number of random initialization points, used only when metaOptimizer=bayesian
+
+    scoring: string (default=log_loss)
+        scoring method to calculate accuracy
+   """
     baseEstimators = None
     nFoldsBase = 3
     saveAndPickBaseDump = None
@@ -58,13 +102,20 @@ class BlendModel():
     _metaEstimator = None
 
     def __init__(self, baseEstimators, nFoldsBase=3, saveAndPickBaseDump=False, saveAndPickBaseDumpLoc='tmp',
-                 metaEstimator=LogisticRegression(), metaTunedParams={}, nFoldsMeta=5):
+                 metaEstimator=LogisticRegression(), metaTunedParams={}, nFoldsMeta=5,
+                 metaOptimizer='grid', metaOptimizerJobs=2, metaOptimizerIter=1, metaOptimizerInitPoints=2,
+                 scoring='log_loss'):
         self.baseEstimators = baseEstimators
         self.nFoldsBase = nFoldsBase
         self.saveAndPickBaseDump = saveAndPickBaseDump
         self.saveAndPickBaseDumpLoc = saveAndPickBaseDumpLoc
         self.metaEstimator = metaEstimator
         self.metaTunedParams = metaTunedParams
+        self.metaOptimizer = metaOptimizer
+        self.metaOptimizerJobs = metaOptimizerJobs
+        self.metaOptimizerIter = metaOptimizerIter
+        self.metaOptimizerInitPoints = metaOptimizerInitPoints
+        self.scoring = scoring
 
     def _generateBlendData(self, df):
         blend_test = np.zeros((df.shape[0], self.numClasses * len(self.baseEstimators)))
@@ -80,7 +131,11 @@ class BlendModel():
         return pd.DataFrame(blend_test)
 
     def _trainBaseClassifiers(self, df, dfLabel):
+        df = pd.DataFrame(df) if isinstance(df, np.ndarray) else df
+        dfLabel = pd.Series(dfLabel) if isinstance(dfLabel, np.ndarray) else dfLabel
         numClasses = len(dfLabel.unique())
+        # Check if input data is pandas series or numpy array
+        numClasses = len(pd.Series(dfLabel).unique()) if isinstance(dfLabel, np.ndarray) else len(dfLabel.unique())
         self.numClasses = numClasses
         baseEstimators = self.baseEstimators
         #cv = cross_validation.StratifiedShuffleSplit(dfLabel, n_iter=7, test_size=0.3, random_state=0)
@@ -109,7 +164,7 @@ class BlendModel():
                 endTime = datetime.now()
                 start = numClasses * cntr
                 #end = start + 3 # check why 3 may be numclasses
-                end = start + numClasses # check why 3 may be numclasses
+                end = start + numClasses  # check why 3 may be numclasses
                 #print clf.__class__.__name__, start, end
                 #print test_index
                 blend_train[test_index, start: end] = clfTmp.predict_proba(x_test)
@@ -127,6 +182,7 @@ class BlendModel():
 
     def fit(self, df, dfLabel):
         if self.saveAndPickBaseDump:
+            # save dfBlend and _baseEstimators as dump
             if not os.path.exists(self.saveAndPickBaseDumpLoc):
                 os.makedirs(self.saveAndPickBaseDumpLoc)
             _baseEstimatorsFilePath = os.path.join(self.saveAndPickBaseDumpLoc, '_baseEstimators.pickle')
@@ -142,7 +198,6 @@ class BlendModel():
             numClasses = len(dfLabel.unique())
             self.numClasses = numClasses
         else:
-            # save dfBlend and _baseEstimators as dump
             dfBlend = self._trainBaseClassifiers(df, dfLabel)
 
         metaEstimator = self.metaEstimator
@@ -150,10 +205,22 @@ class BlendModel():
         print 'MetaEstimators', metaEstimator, metaTunedParams
 
         cv = cross_validation.StratifiedShuffleSplit(dfLabel, n_iter=5, test_size=0.3, random_state=2)
-        gscv = GridSearchCV(metaEstimator, param_grid=metaTunedParams, cv=cv, verbose=3, scoring="log_loss", n_jobs=2)
-        gscv.fit(dfBlend, dfLabel)
-        print gscv.best_estimator_, gscv.best_score_
-        self._metaEstimator = gscv.best_estimator_
+        #scv = None
+        _metaEstimator = None
+        if self.metaOptimizer == 'grid':
+            _metaEstimator = optimize.performGridSearchOptimization(metaEstimator, metaTunedParams, cv, dfBlend, dfLabel,
+                                                                    n_jobs=self.metaOptimizerJobs, scoring=self.scoring)
+        elif self.metaOptimizer == 'random':
+            _metaEstimator = optimize.performRandomizedSearchOptimization(metaEstimator, metaTunedParams, cv, dfBlend, dfLabel,
+                                                                          n_iter=self.metaOptimizerIter, n_jobs=self.metaOptimizerJobs,
+                                                                          scoring=self.scoring)
+        elif self.metaOptimizer == 'bayesian':
+            _metaEstimator = optimize.performBayesianOptimization(metaEstimator, metaTunedParams, cv, dfBlend, dfLabel,
+                                                                  scoring=self.scoring, init_points=self.metaOptimizerInitPoints, 
+                                                                  n_iter=self.metaOptimizerIter)
+        assert(_metaEstimator != None, 'metaOptimizer is set to none')
+        # scv.fit(dfBlend, dfLabel)
+        self._metaEstimator = _metaEstimator
 
     def predict_proba(self, x):
         return self._metaEstimator.predict_proba(self._generateBlendData(x))
@@ -161,7 +228,15 @@ class BlendModel():
     def predict(self, x):
         return self._metaEstimator.predict(self._generateBlendData(x))
 
-    def score(self, x, y, scoring='log_loss'):
+    def base_score(self, x, y, scoring=None):
+        """Calculate holdout score of base classifiers"""
+        scoring = scoring if scoring else self.scoring
+        for cntr, _baseEstimator in enumerate(self._baseEstimators):
+            print "BaseModel", cntr, "score : ", _baseEstimator.__class__.__name__, metrics.log_loss(y, _baseEstimator.predict_proba(x))
+
+    def score(self, x, y, scoring=None):
+        """Calculate holdout score of blended classifier"""
+        scoring = scoring if scoring else self.scoring
         if scoring == 'log_loss':
             print "BlendModel score : ", metrics.log_loss(y, self.predict_proba(x))
 
