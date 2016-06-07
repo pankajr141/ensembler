@@ -58,3 +58,11 @@ blendModel.fit(x, y)
 predictions = blendModel.predict(xHoldout)
 blendModel.score(xHoldout, yHoldOut)
 ```
+
+
+Installation
+------------
+
+#### Installing dependency
+
+```pip install git+https://github.com/fmfn/BayesianOptimization.git```
