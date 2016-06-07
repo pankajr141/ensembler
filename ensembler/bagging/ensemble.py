@@ -5,7 +5,6 @@ Created on 09-Mar-2016
 '''
 
 
-import math
 import os
 
 import pandas as pd
@@ -15,16 +14,31 @@ def get_scaled_data(num, scale=1.28, is_scale=True):
     return scale ** (num * 100) if is_scale else num
 
 
-def ensemble_byweight_logloss(result_dict, column_id='ID', outputFile='ensemble_byweight_logloss.csv', scale=1.28):
+"""
+Function perform weighted average of each model predictions. Model with higher accuracy rate will have more weight to 
+predicted probability
+    Parameters
+    ----------
+    score_dict : dict
+        dict pair of CSV: score (logloss).
+    column_id: string, optional (default='ID')
+        unique identifier for each row
+    outputFile: string, optional (default='ensemble_byweight_logloss.csv')
+        output csv which contains the ensembled log_loss
+    scale: float, optional (default, 1.28)
+        define the influence of dominating models on overall weight scale
+        
+"""
+def ensemble_byweight_logloss(score_dict, column_id='ID', outputFile='ensemble_byweight_logloss.csv', scale=1.28):
     """
     This function assumes that logloss value would be in range (0, 1)
     """
     df = None
     df_id = None
     is_scale = True
-    total_weight = reduce(lambda x, y: x + y, map(lambda x: get_scaled_data(1 - x, is_scale=is_scale), result_dict.values()))
+    total_weight = reduce(lambda x, y: x + y, map(lambda x: get_scaled_data(1 - x, scale=scale, is_scale=is_scale), score_dict.values()))
 
-    for key, score in result_dict.items():
+    for key, score in score_dict.items():
         score = get_scaled_data(1 - score, is_scale=is_scale)
         #print score * 100, score_scale
         weight = score / total_weight
@@ -50,11 +64,11 @@ if __name__ == "__main__":
 
     """ contains file, score pairs, these will be average
     """
-    result_dict = {
+    score_dict = {
                     os.path.join('input1.csv'): 0.47317,
                     os.path.join('input2.csv'): 0.45900,
              }
-    ensemble_byweight_logloss(result_dict)
+    ensemble_byweight_logloss(score_dict)
 
 #df = pd.read_csv(os.path.join('..', 'input', 'extra_trees.csv'))
 #df['PredictedProb'] = df['PredictedProb'].apply(lambda x: .98 if x > 0.9 else x)

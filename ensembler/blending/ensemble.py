@@ -7,39 +7,13 @@ import copy
 from datetime import datetime
 import os
 
-from scipy.optimize import minimize
 from sklearn import cross_validation
 from sklearn import metrics
 from sklearn.externals import joblib
 from sklearn.linear_model import LogisticRegression
 import numpy as np
-import optimize
 import pandas as pd
-
-
-def models_avg(clfs, x_test, y_test):
-    print "#-------------- Models Averaging -----------------#"
-    predictions = []
-    for clf in clfs:
-        _prediction = clf.predict_proba(x_test)
-        print "Score: ", clf.__class__.__name__, " -> ", metrics.log_loss(y_test, _prediction)
-        predictions.append(_prediction)
-
-    def log_loss_func(weights):
-        ''' scipy minimize will pass the weights as a numpy array '''
-        final_prediction = 0
-        for weight, prediction in zip(weights, predictions):
-                final_prediction += weight * prediction
-        return metrics.log_loss(y_test, final_prediction)
-
-    starting_values = [0.5] * len(predictions)
-    cons = ({'type': 'eq', 'fun': lambda w: 1 - sum(w)})
-    bounds = [(0, 1)] * len(predictions)
-    res = minimize(log_loss_func, starting_values, method='SLSQP', bounds=bounds, constraints=cons)
-    print type(res)
-    print('Ensemble Score: {best_score}'.format(best_score=res['fun']))
-    print('Best Weights: {weights}'.format(weights=res['x']))
-
+from ensembler.optimization import optimize
 
 class BlendModel():
     """
@@ -133,7 +107,7 @@ class BlendModel():
     def _trainBaseClassifiers(self, df, dfLabel):
         df = pd.DataFrame(df) if isinstance(df, np.ndarray) else df
         dfLabel = pd.Series(dfLabel) if isinstance(dfLabel, np.ndarray) else dfLabel
-        numClasses = len(dfLabel.unique())
+
         # Check if input data is pandas series or numpy array
         numClasses = len(pd.Series(dfLabel).unique()) if isinstance(dfLabel, np.ndarray) else len(dfLabel.unique())
         self.numClasses = numClasses
@@ -195,7 +169,8 @@ class BlendModel():
                 joblib.dump(dfBlend, dfBlendFilePath)
             self._baseEstimators = joblib.load(_baseEstimatorsFilePath)
             dfBlend = joblib.load(dfBlendFilePath)
-            numClasses = len(dfLabel.unique())
+            
+            numClasses = len(pd.Series(dfLabel).unique()) if isinstance(dfLabel, np.ndarray) else len(dfLabel.unique())
             self.numClasses = numClasses
         else:
             dfBlend = self._trainBaseClassifiers(df, dfLabel)
@@ -238,7 +213,7 @@ class BlendModel():
         """Calculate holdout score of blended classifier"""
         scoring = scoring if scoring else self.scoring
         if scoring == 'log_loss':
-            print "BlendModel score : ", metrics.log_loss(y, self.predict_proba(x))
+            return metrics.log_loss(y, self.predict_proba(x))
 
 if __name__ == "__main__":
     #clf1 = joblib.load(os.path.join(pickle_dir, LogisticRegression().__class__.__name__))

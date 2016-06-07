@@ -34,5 +34,9 @@ LogisticRegressionTuningParams = {
                     'penalty': ['l1', 'l2'],
                 }
 
+
+## Needed to be defined
 RandomForestClassifierTuningParams = {
+                    'n_estimators': [2000, 1000, 500],
+                    'max_depth': [4, 6]
                 }
